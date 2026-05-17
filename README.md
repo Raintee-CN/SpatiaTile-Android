@@ -1,21 +1,21 @@
-[![JitPack](https://jitpack.io/v/Raintee-CN/SpatiaTile-Android.svg)](https://jitpack.io/#Raintee-CN/SpatiaTile-Android)
-
 # SpatiaTile Android
 
-## WHAT IS THIS?
-- The [Spatialite](https://www.gaia-gis.it/gaia-sins/) database ported for *Android*
-- 100% offline, portable and self-contained as *SQLite*.
-- Offline vector tile generation for Android, with MVT and experimental MapLibre Tile support.
+[![JitPack](https://jitpack.io/v/Raintee-CN/SpatiaTile-Android.svg)](https://jitpack.io/#Raintee-CN/SpatiaTile-Android)
 
-## WHEN DO I NEED IT?
-- When you need deployment, collecting, processing and fast querying of small to huge amounts of geometry data (points, polylines, polygons, multipolygons, etc.) on Android devices.
-- When you want to be 100% independent from any server/cloud backend.
+Offline SpatiaLite vector tile engine for Android, with MVT and experimental MapLibre Tile support.
 
-## GETTING STARTED
+## Features
 
-If you know basic *SQLite*, there's almost nothing to learn. The API is 99% the same as the Android *SQLite* API (as of API level 15). The main difference is the packaging. Use `org.spatialite.database.XYZ` instead of `android.database.sqlite.XYZ` and `org.spatialite.XYZ` instead of `android.database.XYZ`. Same applies to the other classes - all platform `SQLiteXYZ` classes have their *Spatialite* versions.
+- Android library built around SpatiaLite, SQLite, GEOS, PROJ, and related native dependencies.
+- 100% offline spatial storage and query support through familiar Android SQLite-style APIs.
+- MVT v2 tile generation directly from local SpatiaLite geometry tables.
+- Experimental MapLibre Tile (`MLT`) generation for MapLibre GL JS MLT vector sources.
+- Supports point, line, polygon, and multi geometry tile output.
+- Supports JSON scalar feature properties and optional feature ids.
+- Includes line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction for tile output.
 
-### Gradle
+## Installation
+
 Add JitPack to your root `settings.gradle` or root `build.gradle`.
 
 For modern Android projects using `dependencyResolutionManagement`:
@@ -53,27 +53,44 @@ dependencies {
 
 Use a GitHub release tag, branch name, or commit hash as `<VERSION>`. For example, after creating a GitHub release tag `v1.0.0`, use `v1.0.0`.
 
-Repository URL: https://github.com/Raintee-CN/SpatiaTile-Android
+## Basic Usage
 
-## EXAMPLE CODE
-There is a very simple and useless example in the `app` module. Another example is the [SpatiAtlas](https://github.com/sevar83/SpatiAtlas) experiment.
+Use the SpatiaLite SQLite wrapper classes instead of Android platform SQLite classes:
 
-## VECTOR TILE EXTENSIONS
+```kotlin
+import org.spatialite.database.SQLiteDatabase
+import org.spatialite.database.SQLiteOpenHelper
+```
 
-This fork adds offline vector tile helpers on top of SpatiaLite so Android apps can generate tiles directly from local geometry tables.
+Android standard cursors are used:
 
-Supported SQL helpers:
+```kotlin
+import android.database.Cursor
+```
 
-- `AsMVTGeom(...)`: transforms geometry into tile coordinates and applies bbox filtering.
-- `AsMVT(...)`: aggregate MVT v2 encoder with geometry, feature id, and JSON properties.
-- `MVTConcat(...)`: concatenates multiple single-layer MVT blobs into a multi-layer MVT tile.
-- `AsMLT(...)` / `ST_AsMLT(...)`: experimental MapLibre Tile encoder for MapLibre GL JS MLT sources.
+`SQLiteDatabase.loadLibs()` is not required. Native libraries are loaded automatically when `org.spatialite.database.SQLiteDatabase` is first used.
 
-MVT supports points, lines, polygons, multi geometries, JSON scalar properties, feature ids, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction.
+## Vector Tile SQL Functions
 
-MLT supports points, lines, polygons, multi geometries, mixed geometry tiles, optional feature ids, nullable string property columns from `properties_json`, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction. Advanced MLT compression such as FastPFOR, FSST, shared dictionaries, and vertex dictionaries is not implemented yet.
+### MVT
 
-Basic MVT example:
+```sql
+AsMVTGeom(geom, minx, miny, maxx, maxy)
+AsMVTGeom(geom, minx, miny, maxx, maxy, extent)
+AsMVTGeom(geom, minx, miny, maxx, maxy, extent, buffer)
+AsMVTGeom(geom, minx, miny, maxx, maxy, extent, buffer, clip)
+
+AsMVT(mvt_geom)
+AsMVT(mvt_geom, layer_name)
+AsMVT(mvt_geom, layer_name, extent)
+AsMVT(mvt_geom, layer_name, extent, properties_json)
+AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id)
+AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id, buffer)
+
+MVTConcat(tile_blob_1, tile_blob_2, ...)
+```
+
+Example:
 
 ```sql
 SELECT AsMVT(
@@ -87,7 +104,18 @@ SELECT AsMVT(
 FROM features;
 ```
 
-Basic MLT example:
+### MLT
+
+```sql
+AsMLT(mlt_geom)
+AsMLT(mlt_geom, layer_name)
+AsMLT(mlt_geom, layer_name, extent)
+AsMLT(mlt_geom, layer_name, extent, properties_json)
+AsMLT(mlt_geom, layer_name, extent, properties_json, feature_id)
+ST_AsMLT(mlt_geom, layer_name, extent, properties_json, feature_id)
+```
+
+Example:
 
 ```sql
 SELECT ST_AsMLT(
@@ -100,105 +128,28 @@ SELECT ST_AsMLT(
 FROM features;
 ```
 
-See `docs/usage.md` for full Android, SpatiaLite, MVT, and MLT usage examples.
+MLT output is experimental. It writes valid MapLibre Tile feature tables with geometry, optional feature ids, and nullable string property columns generated from top-level scalar values in `properties_json`. Advanced MLT compression such as FastPFOR, FSST, shared dictionaries, and vertex dictionaries is not implemented yet.
 
-## HOW IT WORKS?
-Works the same way as the platform *SQLite*. It's accessible through `Java/JNI` wrappers around the *Spatialite* C library. 
-The *Spatialite* wrappers were derived and adapted from the platform *SQLite* wrappers (the standard Android SQLite API).
-
-## Other FAQ
-
-### What is *Spatialite*?
-Simply: *Spatialite* = *SQLite* + advanced geospatial support.<br>
-*Spatialite* is a geospatial extension to *SQLite*. It is a set of few libraries written in C to extend *SQLite* with geometry data types and many [SQL functions](http://www.gaia-gis.it/gaia-sins/spatialite-sql-4.3.0.html) above geometry data. For more info: https://www.gaia-gis.it/gaia-sins/
-
-### Is there a list of all supported Spatialite functions?
-Yes - http://www.gaia-gis.it/gaia-sins/spatialite-sql-4.4.0.html
-
-### Does it use JDBC?
-No. It uses cursors - the suggested lightweight approach to access SQL used in the Android platform instead of the heavier JDBC.
-
-### 64-bit architectures supported?
-
-Yes. It builds for `arm64-v8a` and `x86_64`. `mips64` is not tested.
-
-### Reducing the APK size. 
-
-This library is distributed as multi-architecture AAR file. 
-By default Gradle will produce a universal APK including the native .so libraries compiled for all supported CPU architectures. Usually that's unacceptable for large libraries like this.
-But that's easily fixed by using Gradle's "ABI splits" feature. The following gradle code will produce a separate APK per each architecture. The APK size is reduced few times.
-```
-android {
-    splits {
-        abi {
-            enable true
-                reset()
-                include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-            }
-        }
-    }
-}
-```
-
-### What libraries are packaged currently?
+## Native Dependencies
 
 - SQLite 3.15.1
-- Spatialite 4.3.0a
+- SpatiaLite 4.3.0a
 - GEOS 3.4.2
-- Proj4 4.8.0
+- PROJ 4.8.0
 - lzma 5.2.1
 - iconv 1.13
-- xml2 2.9.2
-- freexl 1.0.2
+- libxml2 2.9.2
+- FreeXL 1.0.2
 
-## REQUIREMENTS
-Min SDK 16
+## Requirements
 
-## MIGRATION TO 2.0+
+- Android min SDK 16
+- Android NDK for local builds
 
-1. Remove calls to `SQLiteDatabase.loadLibs()`. Now it is automatically done.
-2. Replace all occasions of `import org.spatialite.Cursor;` with `import android.database.Cursor;`
-3. Replace all occasions of `import org.spatialite.database.SQLite***Exception;` with `import android.database.sqlite.SQLite***Exception;`
+## Documentation
 
-## CHANGES
+See `docs/usage.md` for full Android, SpatiaLite, MVT, and MLT usage examples.
 
-### 2.0.1
-- Migrated to AndroidX
-- Fixed native crash [#4](https://github.com/sevar83/android-spatialite/issues/4)
+## License
 
-### 2.0.0
-- Now using the [Requery.io SQLite wrapper](https://github.com/requery/sqlite-android/) instead of SQLCipher's. This results to:
-- Android Nougat (25+) supported. The native code no more links to private NDK libraries exception and warning messages similar to `UnsatisfiedLinkError: dlopen failed: library "libandroid_runtime.so" not found` should be no more. For more details: https://developer.android.com/about/versions/nougat/android-7.0-changes.html#ndk;
-- Much cleaner codebase derived from a much newer and more mature AOSP SQLite wrapper snapshot;
-- Now possible to build with the latest NDK (tested on R14);
-- Switched to CLang as the default NDK toolchain;
-- 64-bit build targets (arm64-v8a, x86_64);
-- `SQLiteDatabase.loadLibs()` initialization call is not required anymore;
-- Removed `org.spatialite.Cursor` interface. Used 'android.database.sqlite.Cursor' instead.
-- Removed the `SQLiteXyzException` classes. Their AOSP originals are used instead;
-- Dropped support for Android localized collation. SQL statements with "COLLATE LOCALIZED" will cause error. This is necessary to reduce the library size and ensure N compatibility;
-- Updated SQLite to 3.15.1;
-- Updated lzma to 5.2.1;
-- Updated FreeXL to 1.0.2;
-
-## CREDITS
-The main ideas used here were borrowed from:
-- https://github.com/requery/sqlite-android
-- https://github.com/sqlcipher/android-database-sqlcipher
-- https://github.com/illarionov/android-sqlcipher-spatialite
-
-## SUPPORT
-
-If you like this library, please consider...
-
-<a href="https://www.buymeacoffee.com/5Gds924" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
-
-## KNOWN PROJECTS USING THIS LIBRARY
-
-- [GeoWorld](https://play.google.com/store/apps/details?id=com.buildware.geocoord)
-- [GeoWorld PRO](https://play.google.com/store/apps/details?id=com.buildware.geoworld)
-- [Hema Explorer](https://play.google.com/store/apps/details?id=au.com.hemamaps.explorer)
-- [RadioCells.org Android Client](https://github.com/openbmap/radiocells-scanner-android)
-
-## LICENSE
 Apache License 2.0
