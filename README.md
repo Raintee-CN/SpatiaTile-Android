@@ -1,10 +1,11 @@
-[![Release](https://jitpack.io/v/com.github.sevar83/android-spatialite.svg)](https://jitpack.io/v/com.github.sevar83/android-spatialite.svg)
+[![JitPack](https://jitpack.io/v/Raintee-CN/SpatiaTile-Android.svg)](https://jitpack.io/#Raintee-CN/SpatiaTile-Android)
 
-# android-spatialite 
+# SpatiaTile Android
 
 ## WHAT IS THIS?
 - The [Spatialite](https://www.gaia-gis.it/gaia-sins/) database ported for *Android*
 - 100% offline, portable and self-contained as *SQLite*.
+- Offline vector tile generation for Android, with MVT and experimental MapLibre Tile support.
 
 ## WHEN DO I NEED IT?
 - When you need deployment, collecting, processing and fast querying of small to huge amounts of geometry data (points, polylines, polygons, multipolygons, etc.) on Android devices.
@@ -15,24 +16,91 @@
 If you know basic *SQLite*, there's almost nothing to learn. The API is 99% the same as the Android *SQLite* API (as of API level 15). The main difference is the packaging. Use `org.spatialite.database.XYZ` instead of `android.database.sqlite.XYZ` and `org.spatialite.XYZ` instead of `android.database.XYZ`. Same applies to the other classes - all platform `SQLiteXYZ` classes have their *Spatialite* versions.
 
 ### Gradle
-1) Have this in your project's `build.gradle`:
+Add JitPack to your root `settings.gradle` or root `build.gradle`.
 
-```
-allprojects {
-  repositories {
-    ...
-    maven { url "https://jitpack.io" }
-  }
+For modern Android projects using `dependencyResolutionManagement`:
+
+```gradle
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
 }
 ```
 
-2) Add the following to your module's `build.gradle`:
+For older projects using `allprojects`:
+
+```gradle
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+}
 ```
-implementation 'com.github.sevar83:android-spatialite:<LATEST_VERSION>'
+
+Add the library dependency to your app module:
+
+```gradle
+dependencies {
+    implementation 'com.github.Raintee-CN.SpatiaTile-Android:lib:<VERSION>'
+}
 ```
+
+Use a GitHub release tag, branch name, or commit hash as `<VERSION>`. For example, after creating a GitHub release tag `v1.0.0`, use `v1.0.0`.
+
+Repository URL: https://github.com/Raintee-CN/SpatiaTile-Android
 
 ## EXAMPLE CODE
 There is a very simple and useless example in the `app` module. Another example is the [SpatiAtlas](https://github.com/sevar83/SpatiAtlas) experiment.
+
+## VECTOR TILE EXTENSIONS
+
+This fork adds offline vector tile helpers on top of SpatiaLite so Android apps can generate tiles directly from local geometry tables.
+
+Supported SQL helpers:
+
+- `AsMVTGeom(...)`: transforms geometry into tile coordinates and applies bbox filtering.
+- `AsMVT(...)`: aggregate MVT v2 encoder with geometry, feature id, and JSON properties.
+- `MVTConcat(...)`: concatenates multiple single-layer MVT blobs into a multi-layer MVT tile.
+- `AsMLT(...)` / `ST_AsMLT(...)`: experimental MapLibre Tile encoder for MapLibre GL JS MLT sources.
+
+MVT supports points, lines, polygons, multi geometries, JSON scalar properties, feature ids, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction.
+
+MLT supports points, lines, polygons, multi geometries, mixed geometry tiles, optional feature ids, nullable string property columns from `properties_json`, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction. Advanced MLT compression such as FastPFOR, FSST, shared dictionaries, and vertex dictionaries is not implemented yet.
+
+Basic MVT example:
+
+```sql
+SELECT AsMVT(
+    AsMVTGeom(geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    properties_json,
+    id,
+    256
+) AS tile
+FROM features;
+```
+
+Basic MLT example:
+
+```sql
+SELECT ST_AsMLT(
+    AsMVTGeom(geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    properties_json,
+    id
+) AS tile
+FROM features;
+```
+
+See `docs/usage.md` for full Android, SpatiaLite, MVT, and MLT usage examples.
 
 ## HOW IT WORKS?
 Works the same way as the platform *SQLite*. It's accessible through `Java/JNI` wrappers around the *Spatialite* C library. 
