@@ -26,6 +26,12 @@ struct mvt_buf
     int error;
 };
 
+struct mvt_pt
+{
+    int x;
+    int y;
+};
+
 struct mlt_u32_vec
 {
     unsigned int *data;
@@ -60,6 +66,7 @@ struct mlt_ctx
 {
     char *layer_name;
     int extent;
+    int buffer;
     struct mlt_u32_vec geom_types;
     struct mlt_i32_vec vertices;
     struct mlt_u32_vec geometry_lengths;
@@ -418,6 +425,296 @@ mvt_round_coord (double value)
     return (int) (value - 0.5);
 }
 
+static int
+mvt_same_pt (struct mvt_pt a, struct mvt_pt b)
+{
+    return a.x == b.x && a.y == b.y;
+}
+
+static long long
+mvt_cross (struct mvt_pt a, struct mvt_pt b, struct mvt_pt c)
+{
+    return (long long) (b.x - a.x) * (long long) (c.y - b.y)
+        - (long long) (b.y - a.y) * (long long) (c.x - b.x);
+}
+
+static double
+mvt_ring_area (struct mvt_pt *pts, int n)
+{
+    double area = 0.0;
+    int i;
+    int j;
+
+    if (n < 3)
+        return 0.0;
+    for (i = 0, j = n - 1; i < n; j = i++)
+        area += ((double) pts[j].x * (double) pts[i].y)
+            - ((double) pts[i].x * (double) pts[j].y);
+    return area / 2.0;
+}
+
+static void
+mvt_reverse_pts (struct mvt_pt *pts, int n)
+{
+    int i;
+    struct mvt_pt tmp;
+
+    for (i = 0; i < n / 2; i++)
+      {
+          tmp = pts[i];
+          pts[i] = pts[n - i - 1];
+          pts[n - i - 1] = tmp;
+      }
+}
+
+static int
+mvt_clean_pts (struct mvt_pt *pts, int n, int closed)
+{
+    int i;
+    int out = 0;
+    int changed;
+    int prev;
+    int next;
+
+    for (i = 0; i < n; i++)
+      {
+          if (out == 0 || !mvt_same_pt (pts[out - 1], pts[i]))
+              pts[out++] = pts[i];
+      }
+    n = out;
+    if (closed && n > 1 && mvt_same_pt (pts[0], pts[n - 1]))
+        n--;
+    do
+      {
+          changed = 0;
+          out = 0;
+          for (i = 0; i < n; i++)
+            {
+                if (!closed && (i == 0 || i == n - 1))
+                  {
+                      pts[out++] = pts[i];
+                      continue;
+                  }
+                prev = i == 0 ? n - 1 : i - 1;
+                next = i == n - 1 ? 0 : i + 1;
+                if (n > 2 && mvt_cross (pts[prev], pts[i], pts[next]) == 0)
+                  {
+                      changed = 1;
+                      continue;
+                  }
+                pts[out++] = pts[i];
+            }
+          n = out;
+      }
+    while (closed && changed && n > 3);
+    return n;
+}
+
+static int
+mvt_clip_outcode (double x, double y, double min, double max)
+{
+    int code = 0;
+
+    if (x < min)
+        code |= 1;
+    else if (x > max)
+        code |= 2;
+    if (y < min)
+        code |= 4;
+    else if (y > max)
+        code |= 8;
+    return code;
+}
+
+static int
+mvt_clip_segment (double *x0, double *y0, double *x1, double *y1,
+                  double min, double max)
+{
+    int out0 = mvt_clip_outcode (*x0, *y0, min, max);
+    int out1 = mvt_clip_outcode (*x1, *y1, min, max);
+    int out;
+    double x;
+    double y;
+
+    while (1)
+      {
+          if (!(out0 | out1))
+              return 1;
+          if (out0 & out1)
+              return 0;
+          out = out0 ? out0 : out1;
+          if (out & 8)
+            {
+                x = *x0 + (*x1 - *x0) * (max - *y0) / (*y1 - *y0);
+                y = max;
+            }
+          else if (out & 4)
+            {
+                x = *x0 + (*x1 - *x0) * (min - *y0) / (*y1 - *y0);
+                y = min;
+            }
+          else if (out & 2)
+            {
+                y = *y0 + (*y1 - *y0) * (max - *x0) / (*x1 - *x0);
+                x = max;
+            }
+          else
+            {
+                y = *y0 + (*y1 - *y0) * (min - *x0) / (*x1 - *x0);
+                x = min;
+            }
+          if (out == out0)
+            {
+                *x0 = x;
+                *y0 = y;
+                out0 = mvt_clip_outcode (*x0, *y0, min, max);
+            }
+          else
+            {
+                *x1 = x;
+                *y1 = y;
+                out1 = mvt_clip_outcode (*x1, *y1, min, max);
+            }
+      }
+}
+
+static int
+mvt_clip_inside (struct mvt_pt p, int edge, int min, int max)
+{
+    if (edge == 0)
+        return p.x >= min;
+    if (edge == 1)
+        return p.x <= max;
+    if (edge == 2)
+        return p.y >= min;
+    return p.y <= max;
+}
+
+static struct mvt_pt
+mvt_clip_intersection (struct mvt_pt a, struct mvt_pt b, int edge, int min, int max)
+{
+    struct mvt_pt out = a;
+    double x1 = (double) a.x;
+    double y1 = (double) a.y;
+    double x2 = (double) b.x;
+    double y2 = (double) b.y;
+    double t;
+
+    if (edge == 0 || edge == 1)
+      {
+          double x = edge == 0 ? (double) min : (double) max;
+          if (x2 != x1)
+              t = (x - x1) / (x2 - x1);
+          else
+              t = 0.0;
+          out.x = mvt_round_coord (x);
+          out.y = mvt_round_coord (y1 + t * (y2 - y1));
+      }
+    else
+      {
+          double y = edge == 2 ? (double) min : (double) max;
+          if (y2 != y1)
+              t = (y - y1) / (y2 - y1);
+          else
+              t = 0.0;
+          out.x = mvt_round_coord (x1 + t * (x2 - x1));
+          out.y = mvt_round_coord (y);
+      }
+    return out;
+}
+
+static int
+mvt_clip_polygon_edge (struct mvt_pt *in, int in_count, struct mvt_pt *out,
+                       int edge, int min, int max)
+{
+    int i;
+    int out_count = 0;
+    struct mvt_pt prev;
+    struct mvt_pt cur;
+    int prev_inside;
+    int cur_inside;
+
+    if (in_count <= 0)
+        return 0;
+    prev = in[in_count - 1];
+    prev_inside = mvt_clip_inside (prev, edge, min, max);
+    for (i = 0; i < in_count; i++)
+      {
+          cur = in[i];
+          cur_inside = mvt_clip_inside (cur, edge, min, max);
+          if (cur_inside)
+            {
+                if (!prev_inside)
+                    out[out_count++] = mvt_clip_intersection (prev, cur, edge, min, max);
+                out[out_count++] = cur;
+            }
+          else if (prev_inside)
+              out[out_count++] = mvt_clip_intersection (prev, cur, edge, min, max);
+          prev = cur;
+          prev_inside = cur_inside;
+      }
+    return out_count;
+}
+
+static int
+mvt_clip_polygon (struct mvt_pt **pts, int count, int min, int max)
+{
+    struct mvt_pt *tmp;
+    struct mvt_pt *work;
+    int cap;
+    int edge;
+    int out_count;
+
+    if (count < 3)
+        return 0;
+    cap = count * 2 + 8;
+    work = (struct mvt_pt *) malloc (sizeof (struct mvt_pt) * (size_t) cap);
+    tmp = (struct mvt_pt *) malloc (sizeof (struct mvt_pt) * (size_t) cap);
+    if (!work || !tmp)
+      {
+          free (work);
+          free (tmp);
+          return -1;
+      }
+    memcpy (work, *pts, sizeof (struct mvt_pt) * (size_t) count);
+    for (edge = 0; edge < 4; edge++)
+      {
+          out_count = mvt_clip_polygon_edge (work, count, tmp, edge, min, max);
+          if (out_count < 3)
+            {
+                free (work);
+                free (tmp);
+                return 0;
+            }
+          if (out_count > cap / 2)
+            {
+                struct mvt_pt *new_work;
+                struct mvt_pt *new_tmp;
+                cap = out_count * 2 + 8;
+                new_work = (struct mvt_pt *) realloc (work, sizeof (struct mvt_pt) * (size_t) cap);
+                new_tmp = (struct mvt_pt *) realloc (tmp, sizeof (struct mvt_pt) * (size_t) cap);
+                if (!new_work || !new_tmp)
+                  {
+                      if (new_work)
+                          work = new_work;
+                      if (new_tmp)
+                          tmp = new_tmp;
+                      free (work);
+                      free (tmp);
+                      return -1;
+                  }
+                work = new_work;
+                tmp = new_tmp;
+            }
+          memcpy (work, tmp, sizeof (struct mvt_pt) * (size_t) out_count);
+          count = out_count;
+      }
+    free (*pts);
+    free (tmp);
+    *pts = work;
+    return count;
+}
+
 static void
 mvt_json_skip_ws (const char **ptr)
 {
@@ -741,35 +1038,74 @@ mlt_append_multipoint_geom (struct mlt_ctx *ctx, gaiaPointPtr first)
 }
 
 static int
+mlt_push_line_part (struct mlt_ctx *ctx, struct mvt_pt *pts, int count)
+{
+    int i;
+
+    if (count < 2)
+        return 1;
+    for (i = 0; i < count; i++)
+      {
+          if (!mlt_i32_vec_push (&ctx->vertices, pts[i].x)
+              || !mlt_i32_vec_push (&ctx->vertices, pts[i].y))
+              return 0;
+      }
+    return mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count);
+}
+
+static int
 mlt_append_line_vertices (struct mlt_ctx *ctx, gaiaLinestringPtr line)
 {
     int i;
-    int count = 0;
-    int prev_x = 0;
-    int prev_y = 0;
-    int x;
-    int y;
+    int part_count = 0;
+    int segment_count;
     double dx;
     double dy;
     double z;
     double m;
+    double x0;
+    double y0;
+    double x1;
+    double y1;
+    double ox1;
+    double oy1;
+    double min = (double) -ctx->buffer;
+    double max = (double) ctx->extent + (double) ctx->buffer;
+    struct mvt_pt segment[2];
 
-    for (i = 0; i < line->Points; i++)
+    if (line->Points < 2)
+        return 0;
+    gaiaLineGetPoint (line, 0, &x0, &y0, &z, &m);
+    for (i = 1; i < line->Points; i++)
       {
           gaiaLineGetPoint (line, i, &dx, &dy, &z, &m);
-          x = mvt_round_coord (dx);
-          y = mvt_round_coord (dy);
-          if (count > 0 && x == prev_x && y == prev_y)
-              continue;
-          if (!mlt_i32_vec_push (&ctx->vertices, x) || !mlt_i32_vec_push (&ctx->vertices, y))
-              return 0;
-          prev_x = x;
-          prev_y = y;
-          count++;
+          x1 = dx;
+          y1 = dy;
+          ox1 = x1;
+          oy1 = y1;
+          dx = x0;
+          dy = y0;
+          if (mvt_clip_segment (&dx, &dy, &x1, &y1, min, max))
+            {
+                segment[0].x = mvt_round_coord (dx);
+                segment[0].y = mvt_round_coord (dy);
+                segment[1].x = mvt_round_coord (x1);
+                segment[1].y = mvt_round_coord (y1);
+                if (!mvt_same_pt (segment[0], segment[1]))
+                  {
+                      segment_count = mvt_clean_pts (segment, 2, 0);
+                      if (segment_count == 2)
+                        {
+                            if (!mlt_push_line_part (ctx, segment, segment_count))
+                                return -1;
+                            part_count++;
+                        }
+                  }
+            }
+          x0 = ox1;
+          y0 = oy1;
       }
-    if (count < 2)
-        return 0;
-    return mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count);
+    return part_count;
 }
 
 static int
@@ -777,14 +1113,32 @@ mlt_append_line_geom (struct mlt_ctx *ctx, gaiaLinestringPtr line)
 {
     int old_vertices = ctx->vertices.len;
     int old_rings = ctx->ring_lengths.len;
+    int part_count;
+    int i;
 
-    if (!mlt_append_line_vertices (ctx, line))
+    part_count = mlt_append_line_vertices (ctx, line);
+    if (part_count < 0)
+      {
+          ctx->vertices.len = old_vertices;
+          ctx->ring_lengths.len = old_rings;
+          return 0;
+      }
+    if (part_count == 0)
       {
           ctx->vertices.len = old_vertices;
           ctx->ring_lengths.len = old_rings;
           return 1;
       }
-    return mlt_u32_vec_push (&ctx->geom_types, 1);
+    for (i = 0; i < part_count; i++)
+      {
+          if (!mlt_u32_vec_push (&ctx->geom_types, 1))
+            {
+                ctx->vertices.len = old_vertices;
+                ctx->ring_lengths.len = old_rings;
+                return 0;
+            }
+      }
+    return 1;
 }
 
 static int
@@ -794,19 +1148,20 @@ mlt_append_multiline_geom (struct mlt_ctx *ctx, gaiaLinestringPtr first)
     int old_geometry = ctx->geometry_lengths.len;
     int old_rings = ctx->ring_lengths.len;
     unsigned int line_count = 0;
+    int part_count;
     gaiaLinestringPtr line;
 
     for (line = first; line; line = line->Next)
       {
-          if (mlt_append_line_vertices (ctx, line))
-              line_count++;
-          else
+          part_count = mlt_append_line_vertices (ctx, line);
+          if (part_count < 0)
             {
                 ctx->vertices.len = old_vertices;
                 ctx->geometry_lengths.len = old_geometry;
                 ctx->ring_lengths.len = old_rings;
                 return 0;
             }
+          line_count += (unsigned int) part_count;
       }
     if (line_count == 0)
       {
@@ -832,33 +1187,120 @@ mlt_append_ring_vertices (struct mlt_ctx *ctx, gaiaRingPtr ring)
     int i;
     int limit = ring->Points > 0 ? ring->Points - 1 : 0;
     int count = 0;
-    int prev_x = 0;
-    int prev_y = 0;
-    int x;
-    int y;
+    int clipped_count;
     double dx;
     double dy;
     double z;
     double m;
+    double area;
+    struct mvt_pt *pts;
 
     if (limit < 3)
         return 0;
+    pts = (struct mvt_pt *) malloc (sizeof (struct mvt_pt) * (size_t) limit);
+    if (!pts)
+        return -1;
     for (i = 0; i < limit; i++)
       {
           gaiaRingGetPoint (ring, i, &dx, &dy, &z, &m);
-          x = mvt_round_coord (dx);
-          y = mvt_round_coord (dy);
-          if (count > 0 && x == prev_x && y == prev_y)
-              continue;
-          if (!mlt_i32_vec_push (&ctx->vertices, x) || !mlt_i32_vec_push (&ctx->vertices, y))
-              return 0;
-          prev_x = x;
-          prev_y = y;
-          count++;
+          pts[i].x = mvt_round_coord (dx);
+          pts[i].y = mvt_round_coord (dy);
       }
+    count = mvt_clean_pts (pts, limit, 1);
+    clipped_count = mvt_clip_polygon (&pts, count, -ctx->buffer, ctx->extent + ctx->buffer);
+    if (clipped_count < 0)
+      {
+          free (pts);
+          return -1;
+      }
+    count = mvt_clean_pts (pts, clipped_count, 1);
     if (count < 3)
+      {
+          free (pts);
+          return 0;
+      }
+    area = mvt_ring_area (pts, count);
+    if (area == 0.0)
+      {
+          free (pts);
+          return 0;
+      }
+    if (area > 0.0)
+        mvt_reverse_pts (pts, count);
+    for (i = 0; i < count; i++)
+      {
+          if (!mlt_i32_vec_push (&ctx->vertices, pts[i].x)
+              || !mlt_i32_vec_push (&ctx->vertices, pts[i].y))
+            {
+                free (pts);
+                return -1;
+            }
+      }
+    free (pts);
+    if (!mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count))
+        return -1;
+    return 1;
+}
+
+static int
+mlt_append_oriented_ring_vertices (struct mlt_ctx *ctx, gaiaRingPtr ring, int is_exterior)
+{
+    int i;
+    int limit = ring->Points > 0 ? ring->Points - 1 : 0;
+    int count = 0;
+    int clipped_count;
+    double dx;
+    double dy;
+    double z;
+    double m;
+    double area;
+    struct mvt_pt *pts;
+
+    if (limit < 3)
         return 0;
-    return mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count);
+    pts = (struct mvt_pt *) malloc (sizeof (struct mvt_pt) * (size_t) limit);
+    if (!pts)
+        return -1;
+    for (i = 0; i < limit; i++)
+      {
+          gaiaRingGetPoint (ring, i, &dx, &dy, &z, &m);
+          pts[i].x = mvt_round_coord (dx);
+          pts[i].y = mvt_round_coord (dy);
+      }
+    count = mvt_clean_pts (pts, limit, 1);
+    clipped_count = mvt_clip_polygon (&pts, count, -ctx->buffer, ctx->extent + ctx->buffer);
+    if (clipped_count < 0)
+      {
+          free (pts);
+          return -1;
+      }
+    count = mvt_clean_pts (pts, clipped_count, 1);
+    if (count < 3)
+      {
+          free (pts);
+          return 0;
+      }
+    area = mvt_ring_area (pts, count);
+    if (area == 0.0)
+      {
+          free (pts);
+          return 0;
+      }
+    if ((is_exterior && area > 0.0) || (!is_exterior && area < 0.0))
+        mvt_reverse_pts (pts, count);
+    for (i = 0; i < count; i++)
+      {
+          if (!mlt_i32_vec_push (&ctx->vertices, pts[i].x)
+              || !mlt_i32_vec_push (&ctx->vertices, pts[i].y))
+            {
+                free (pts);
+                return -1;
+            }
+      }
+    free (pts);
+    if (!mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count))
+        return -1;
+    return 1;
 }
 
 static int
@@ -870,11 +1312,11 @@ mlt_append_polygon_geom (struct mlt_ctx *ctx, gaiaPolygonPtr poly)
     int old_rings = ctx->ring_lengths.len;
     unsigned int ring_count = 0;
 
-    if (mlt_append_ring_vertices (ctx, poly->Exterior))
+    if (mlt_append_oriented_ring_vertices (ctx, poly->Exterior, 1))
         ring_count++;
     for (i = 0; i < poly->NumInteriors; i++)
       {
-          if (mlt_append_ring_vertices (ctx, poly->Interiors + i))
+          if (mlt_append_oriented_ring_vertices (ctx, poly->Interiors + i, 0))
               ring_count++;
       }
     if (ring_count == 0)
@@ -905,11 +1347,11 @@ mlt_append_multipolygon_geom (struct mlt_ctx *ctx, gaiaPolygonPtr first)
     for (poly = first; poly; poly = poly->Next)
       {
           ring_count = 0;
-          if (mlt_append_ring_vertices (ctx, poly->Exterior))
+          if (mlt_append_oriented_ring_vertices (ctx, poly->Exterior, 1))
               ring_count++;
           for (i = 0; i < poly->NumInteriors; i++)
             {
-                if (mlt_append_ring_vertices (ctx, poly->Interiors + i))
+                if (mlt_append_oriented_ring_vertices (ctx, poly->Interiors + i, 0))
                     ring_count++;
             }
           if (ring_count > 0)
@@ -1234,6 +1676,8 @@ fnct_AsMLT_step (sqlite3_context * context, int argc, sqlite3_value ** argv)
       }
     if (ctx->error || argc < 1 || sqlite3_value_type (argv[0]) == SQLITE_NULL)
         return;
+    if (ctx->buffer == 0)
+        ctx->buffer = 256;
     if (argc > 1 && sqlite3_value_type (argv[1]) == SQLITE_TEXT && ctx->geom_types.len == 0)
       {
           name = (const char *) sqlite3_value_text (argv[1]);
