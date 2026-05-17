@@ -34,6 +34,50 @@ implementation 'com.github.sevar83:android-spatialite:<LATEST_VERSION>'
 ## EXAMPLE CODE
 There is a very simple and useless example in the `app` module. Another example is the [SpatiAtlas](https://github.com/sevar83/SpatiAtlas) experiment.
 
+## VECTOR TILE EXTENSIONS
+
+This fork adds offline vector tile helpers on top of SpatiaLite so Android apps can generate tiles directly from local geometry tables.
+
+Supported SQL helpers:
+
+- `AsMVTGeom(...)`: transforms geometry into tile coordinates and applies bbox filtering.
+- `AsMVT(...)`: aggregate MVT v2 encoder with geometry, feature id, and JSON properties.
+- `MVTConcat(...)`: concatenates multiple single-layer MVT blobs into a multi-layer MVT tile.
+- `AsMLT(...)` / `ST_AsMLT(...)`: experimental MapLibre Tile encoder for MapLibre GL JS MLT sources.
+
+MVT supports points, lines, polygons, multi geometries, JSON scalar properties, feature ids, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction.
+
+MLT supports points, lines, polygons, multi geometries, mixed geometry tiles, optional feature ids, nullable string property columns from `properties_json`, line/polygon buffer clipping, degenerate geometry filtering, and polygon ring direction correction. Advanced MLT compression such as FastPFOR, FSST, shared dictionaries, and vertex dictionaries is not implemented yet.
+
+Basic MVT example:
+
+```sql
+SELECT AsMVT(
+    AsMVTGeom(geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    properties_json,
+    id,
+    256
+) AS tile
+FROM features;
+```
+
+Basic MLT example:
+
+```sql
+SELECT ST_AsMLT(
+    AsMVTGeom(geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    properties_json,
+    id
+) AS tile
+FROM features;
+```
+
+See `docs/usage.md` for full Android, SpatiaLite, MVT, and MLT usage examples.
+
 ## HOW IT WORKS?
 Works the same way as the platform *SQLite*. It's accessible through `Java/JNI` wrappers around the *Spatialite* C library. 
 The *Spatialite* wrappers were derived and adapted from the platform *SQLite* wrappers (the standard Android SQLite API).
