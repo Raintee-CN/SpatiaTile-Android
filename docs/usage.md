@@ -302,6 +302,11 @@ AsMVTGeom(geom, minx, miny, maxx, maxy, extent, buffer, clip)
 AsMVT(mvt_geom)
 AsMVT(mvt_geom, layer_name)
 AsMVT(mvt_geom, layer_name, extent)
+AsMVT(mvt_geom, layer_name, extent, properties_json)
+AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id)
+AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id, buffer)
+
+MVTConcat(tile_blob_1, tile_blob_2, ...)
 ```
 
 ### 参数说明
@@ -310,12 +315,16 @@ AsMVT(mvt_geom, layer_name, extent)
 geom: SpatiaLite geometry blob
 minx, miny, maxx, maxy: 当前瓦片在数据坐标系中的范围
 extent: MVT 内部坐标范围，默认建议 4096
-buffer: 瓦片缓冲区，第一版保留参数
-clip: 是否裁剪，第一版保留参数
+buffer: 瓦片缓冲区，用于 bbox 预过滤和 line 裁剪范围
+clip: 是否启用 bbox 预过滤
 layer_name: MVT layer 名称
+properties_json: JSON object 字符串，作为 feature 属性写入 MVT
+feature_id: 可选 feature id，写入 MVT Feature.id
 ```
 
-当前第一版 `AsMVT` 输出 geometry-only MVT v2 PBF，不包含属性字典和 feature id。属性编码、多 layer、完整 polygon 裁剪和简化可后续扩展。
+当前 `AsMVT` 输出 MVT v2 PBF，支持 geometry、JSON 标量属性和 feature id。`AsMVTGeom` 会过滤小于半像素的非点 geometry；`AsMVT` 编码阶段会按 buffer 范围裁剪 line 和 polygon、去连续重复点、过滤退化 geometry、清理 polygon 共线点并修正 ring 方向。更强简化可后续扩展。
+
+属性 JSON 支持 object 顶层的 string、number、boolean 和 null。number 会按 MVT value 类型区分 int、uint、sint 和 double；null 会跳过；object/array 会跳过。负数 feature id 会跳过，因为 MVT Feature.id 是 uint64。
 
 `AsMVT` 是聚合函数。每一行输入一个 `AsMVTGeom(...)` 结果，最终返回一个完整 MVT tile blob。输入结果集只有一行时，它自然输出只包含单条 feature 的 tile；因此单条和多条都使用同一个 `AsMVT` API。
 
@@ -327,7 +336,10 @@ SQLite 不建议把同名同参数函数同时注册为 scalar 和 aggregate。�
 SELECT AsMVT(
     AsMVTGeom(f.geom, :minx, :miny, :maxx, :maxy, 4096),
     'features',
-    4096
+    4096,
+    f.properties,
+    f.id,
+    256
 ) AS tile
 FROM features AS f
 WHERE f.rowid IN (
@@ -337,6 +349,72 @@ WHERE f.rowid IN (
       AND f_geometry_column = 'geom'
       AND search_frame = BuildMbr(:minx, :miny, :maxx, :maxy, 3857)
 );
+```
+
+如果属性保存在独立表，可以 join 后传入：
+
+```sql
+SELECT AsMVT(
+    AsMVTGeom(f.geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    p.properties,
+    f.id,
+    256
+) AS tile
+FROM features AS f
+LEFT JOIN feature_properties AS p
+  ON p.feature_id = f.id
+WHERE f.rowid IN (
+    SELECT rowid
+    FROM SpatialIndex
+    WHERE f_table_name = 'features'
+      AND f_geometry_column = 'geom'
+      AND search_frame = BuildMbr(:minx, :miny, :maxx, :maxy, 3857)
+);
+```
+
+### 多 layer MVT
+
+`MVTConcat(...)` 可以拼接多个 `AsMVT(...)` 生成的 tile blob。MVT 顶层是 repeated layer message，多个完整 tile blob 直接拼接后仍是合法的多 layer tile。
+
+```sql
+SELECT MVTConcat(
+    (
+        SELECT AsMVT(
+            AsMVTGeom(p.geom, :minx, :miny, :maxx, :maxy, 4096),
+            'points',
+            4096,
+            p.properties,
+            p.id,
+            256
+        )
+        FROM points AS p
+        WHERE p.rowid IN (
+            SELECT rowid FROM SpatialIndex
+            WHERE f_table_name = 'points'
+              AND f_geometry_column = 'geom'
+              AND search_frame = BuildMbr(:minx, :miny, :maxx, :maxy, 3857)
+        )
+    ),
+    (
+        SELECT AsMVT(
+            AsMVTGeom(l.geom, :minx, :miny, :maxx, :maxy, 4096),
+            'lines',
+            4096,
+            l.properties,
+            l.id,
+            256
+        )
+        FROM lines AS l
+        WHERE l.rowid IN (
+            SELECT rowid FROM SpatialIndex
+            WHERE f_table_name = 'lines'
+              AND f_geometry_column = 'geom'
+              AND search_frame = BuildMbr(:minx, :miny, :maxx, :maxy, 3857)
+        )
+    )
+) AS tile;
 ```
 
 Kotlin 读取 MVT blob：
