@@ -62,6 +62,7 @@ struct mlt_ctx
     int extent;
     struct mlt_u32_vec geom_types;
     struct mlt_i32_vec vertices;
+    struct mlt_u32_vec geometry_lengths;
     struct mlt_u32_vec part_lengths;
     struct mlt_u32_vec ring_lengths;
     struct mlt_u64_vec ids;
@@ -70,6 +71,10 @@ struct mlt_ctx
     int prop_cap;
     int feature_count;
     int has_id;
+    int has_multipoint;
+    int has_multiline;
+    int has_multipolygon;
+    int has_polygon;
     int error;
 };
 
@@ -289,6 +294,7 @@ mlt_ctx_free (struct mlt_ctx *ctx)
     ctx->layer_name = NULL;
     mlt_u32_vec_free (&ctx->geom_types);
     mlt_i32_vec_free (&ctx->vertices);
+    mlt_u32_vec_free (&ctx->geometry_lengths);
     mlt_u32_vec_free (&ctx->part_lengths);
     mlt_u32_vec_free (&ctx->ring_lengths);
     mlt_u64_vec_free (&ctx->ids);
@@ -706,6 +712,35 @@ mlt_append_point_geom (struct mlt_ctx *ctx, gaiaPointPtr point)
 }
 
 static int
+mlt_append_multipoint_geom (struct mlt_ctx *ctx, gaiaPointPtr first)
+{
+    int old_vertices = ctx->vertices.len;
+    unsigned int count = 0;
+    gaiaPointPtr point;
+
+    for (point = first; point; point = point->Next)
+      {
+          if (!mlt_i32_vec_push (&ctx->vertices, mvt_round_coord (point->X))
+              || !mlt_i32_vec_push (&ctx->vertices, mvt_round_coord (point->Y)))
+            {
+                ctx->vertices.len = old_vertices;
+                return 0;
+            }
+          count++;
+      }
+    if (count == 0)
+        return 1;
+    if (!mlt_u32_vec_push (&ctx->geometry_lengths, count)
+        || !mlt_u32_vec_push (&ctx->geom_types, 3))
+      {
+          ctx->vertices.len = old_vertices;
+          return 0;
+      }
+    ctx->has_multipoint = 1;
+    return 1;
+}
+
+static int
 mlt_append_line_vertices (struct mlt_ctx *ctx, gaiaLinestringPtr line)
 {
     int i;
@@ -734,22 +769,61 @@ mlt_append_line_vertices (struct mlt_ctx *ctx, gaiaLinestringPtr line)
       }
     if (count < 2)
         return 0;
-    return mlt_u32_vec_push (&ctx->part_lengths, (unsigned int) count);
+    return mlt_u32_vec_push (&ctx->ring_lengths, (unsigned int) count);
 }
 
 static int
 mlt_append_line_geom (struct mlt_ctx *ctx, gaiaLinestringPtr line)
 {
     int old_vertices = ctx->vertices.len;
-    int old_parts = ctx->part_lengths.len;
+    int old_rings = ctx->ring_lengths.len;
 
     if (!mlt_append_line_vertices (ctx, line))
       {
           ctx->vertices.len = old_vertices;
-          ctx->part_lengths.len = old_parts;
+          ctx->ring_lengths.len = old_rings;
           return 1;
       }
     return mlt_u32_vec_push (&ctx->geom_types, 1);
+}
+
+static int
+mlt_append_multiline_geom (struct mlt_ctx *ctx, gaiaLinestringPtr first)
+{
+    int old_vertices = ctx->vertices.len;
+    int old_geometry = ctx->geometry_lengths.len;
+    int old_rings = ctx->ring_lengths.len;
+    unsigned int line_count = 0;
+    gaiaLinestringPtr line;
+
+    for (line = first; line; line = line->Next)
+      {
+          if (mlt_append_line_vertices (ctx, line))
+              line_count++;
+          else
+            {
+                ctx->vertices.len = old_vertices;
+                ctx->geometry_lengths.len = old_geometry;
+                ctx->ring_lengths.len = old_rings;
+                return 0;
+            }
+      }
+    if (line_count == 0)
+      {
+          ctx->vertices.len = old_vertices;
+          ctx->ring_lengths.len = old_rings;
+          return 1;
+      }
+    if (!mlt_u32_vec_push (&ctx->geometry_lengths, line_count)
+        || !mlt_u32_vec_push (&ctx->geom_types, 4))
+      {
+          ctx->vertices.len = old_vertices;
+          ctx->geometry_lengths.len = old_geometry;
+          ctx->ring_lengths.len = old_rings;
+          return 0;
+      }
+    ctx->has_multiline = 1;
+    return 1;
 }
 
 static int
@@ -809,10 +883,67 @@ mlt_append_polygon_geom (struct mlt_ctx *ctx, gaiaPolygonPtr poly)
           ctx->part_lengths.len = old_parts;
           ctx->ring_lengths.len = old_rings;
           return 1;
-      }
+    }
     if (!mlt_u32_vec_push (&ctx->part_lengths, ring_count))
         return 0;
+    ctx->has_polygon = 1;
     return mlt_u32_vec_push (&ctx->geom_types, 2);
+}
+
+static int
+mlt_append_multipolygon_geom (struct mlt_ctx *ctx, gaiaPolygonPtr first)
+{
+    int i;
+    int old_vertices = ctx->vertices.len;
+    int old_geometry = ctx->geometry_lengths.len;
+    int old_parts = ctx->part_lengths.len;
+    int old_rings = ctx->ring_lengths.len;
+    unsigned int polygon_count = 0;
+    unsigned int ring_count;
+    gaiaPolygonPtr poly;
+
+    for (poly = first; poly; poly = poly->Next)
+      {
+          ring_count = 0;
+          if (mlt_append_ring_vertices (ctx, poly->Exterior))
+              ring_count++;
+          for (i = 0; i < poly->NumInteriors; i++)
+            {
+                if (mlt_append_ring_vertices (ctx, poly->Interiors + i))
+                    ring_count++;
+            }
+          if (ring_count > 0)
+            {
+                if (!mlt_u32_vec_push (&ctx->part_lengths, ring_count))
+                  {
+                      ctx->vertices.len = old_vertices;
+                      ctx->geometry_lengths.len = old_geometry;
+                      ctx->part_lengths.len = old_parts;
+                      ctx->ring_lengths.len = old_rings;
+                      return 0;
+                  }
+                polygon_count++;
+            }
+      }
+    if (polygon_count == 0)
+      {
+          ctx->vertices.len = old_vertices;
+          ctx->part_lengths.len = old_parts;
+          ctx->ring_lengths.len = old_rings;
+          return 1;
+      }
+    if (!mlt_u32_vec_push (&ctx->geometry_lengths, polygon_count)
+        || !mlt_u32_vec_push (&ctx->geom_types, 5))
+      {
+          ctx->vertices.len = old_vertices;
+          ctx->geometry_lengths.len = old_geometry;
+          ctx->part_lengths.len = old_parts;
+          ctx->ring_lengths.len = old_rings;
+          return 0;
+      }
+    ctx->has_polygon = 1;
+    ctx->has_multipolygon = 1;
+    return 1;
 }
 
 static void
@@ -824,24 +955,36 @@ mlt_append_geom (struct mlt_ctx *ctx, gaiaGeomCollPtr geom, unsigned long long f
     gaiaLinestringPtr line;
     gaiaPolygonPtr poly;
 
-    if (geom->FirstPolygon)
+    if (geom->DeclaredType == GAIA_MULTIPOLYGON || geom->DeclaredType == GAIA_MULTIPOLYGONZ
+        || geom->DeclaredType == GAIA_MULTIPOLYGONM || geom->DeclaredType == GAIA_MULTIPOLYGONZM)
+      {
+          if (!mlt_append_multipolygon_geom (ctx, geom->FirstPolygon))
+              ctx->error = 1;
+      }
+    else if (geom->DeclaredType == GAIA_MULTILINESTRING || geom->DeclaredType == GAIA_MULTILINESTRINGZ
+             || geom->DeclaredType == GAIA_MULTILINESTRINGM || geom->DeclaredType == GAIA_MULTILINESTRINGZM)
+      {
+          if (!mlt_append_multiline_geom (ctx, geom->FirstLinestring))
+              ctx->error = 1;
+      }
+    else if (geom->DeclaredType == GAIA_MULTIPOINT || geom->DeclaredType == GAIA_MULTIPOINTZ
+             || geom->DeclaredType == GAIA_MULTIPOINTM || geom->DeclaredType == GAIA_MULTIPOINTZM)
+      {
+          if (!mlt_append_multipoint_geom (ctx, geom->FirstPoint))
+              ctx->error = 1;
+      }
+    else
       {
           for (poly = geom->FirstPolygon; poly; poly = poly->Next)
             {
                 if (!mlt_append_polygon_geom (ctx, poly))
                     ctx->error = 1;
             }
-      }
-    else if (geom->FirstLinestring)
-      {
           for (line = geom->FirstLinestring; line; line = line->Next)
             {
                 if (!mlt_append_line_geom (ctx, line))
                     ctx->error = 1;
             }
-      }
-    else
-      {
           for (point = geom->FirstPoint; point; point = point->Next)
             {
                 if (!mlt_append_point_geom (ctx, point))
@@ -912,6 +1055,19 @@ mlt_write_u64_varint_stream (struct mvt_buf *out, int physical_type, int logical
 }
 
 static void
+mlt_copy_line_lengths_to_part_lengths (struct mlt_u32_vec *parts, struct mlt_u32_vec *rings)
+{
+    int i;
+
+    parts->len = 0;
+    for (i = 0; i < rings->len; i++)
+      {
+          if (!mlt_u32_vec_push (parts, rings->data[i]))
+              return;
+      }
+}
+
+static void
 mlt_write_bool_present_stream (struct mvt_buf *out, unsigned char *present, int count)
 {
     struct mvt_buf data;
@@ -978,10 +1134,28 @@ static void
 mlt_build_tile (struct mlt_ctx *ctx, struct mvt_buf *tile)
 {
     struct mvt_buf body;
+    struct mlt_u32_vec line_part_lengths;
+    struct mlt_u32_vec *part_lengths;
+    struct mlt_u32_vec *ring_lengths;
     int column_count;
     int geom_streams = 2;
     int i;
 
+    memset (&line_part_lengths, 0, sizeof (line_part_lengths));
+    part_lengths = &ctx->part_lengths;
+    ring_lengths = &ctx->ring_lengths;
+    if (!ctx->has_polygon && ctx->ring_lengths.len > 0)
+      {
+          mlt_copy_line_lengths_to_part_lengths (&line_part_lengths, &ctx->ring_lengths);
+          if (line_part_lengths.len != ctx->ring_lengths.len)
+            {
+                tile->error = 1;
+                mlt_u32_vec_free (&line_part_lengths);
+                return;
+            }
+          part_lengths = &line_part_lengths;
+          ring_lengths = NULL;
+      }
     mvt_buf_init (&body);
     column_count = (ctx->has_id ? 2 : 1) + ctx->prop_count;
     mlt_buf_put_string (&body, ctx->layer_name ? ctx->layer_name : "default");
@@ -998,16 +1172,20 @@ mlt_build_tile (struct mlt_ctx *ctx, struct mvt_buf *tile)
 
     if (ctx->has_id)
         mlt_write_u64_varint_stream (&body, 1, 0, &ctx->ids);
-    if (ctx->part_lengths.len > 0)
+    if (ctx->geometry_lengths.len > 0)
         geom_streams++;
-    if (ctx->ring_lengths.len > 0)
+    if (part_lengths && part_lengths->len > 0)
+        geom_streams++;
+    if (ring_lengths && ring_lengths->len > 0)
         geom_streams++;
     mvt_buf_put_varint64 (&body, (unsigned long long) geom_streams);
     mlt_write_u32_varint_stream (&body, 1, 0, &ctx->geom_types);
-    if (ctx->part_lengths.len > 0)
-        mlt_write_u32_varint_stream (&body, 3, 2, &ctx->part_lengths);
-    if (ctx->ring_lengths.len > 0)
-        mlt_write_u32_varint_stream (&body, 3, 3, &ctx->ring_lengths);
+    if (ctx->geometry_lengths.len > 0)
+        mlt_write_u32_varint_stream (&body, 3, 1, &ctx->geometry_lengths);
+    if (part_lengths && part_lengths->len > 0)
+        mlt_write_u32_varint_stream (&body, 3, 2, part_lengths);
+    if (ring_lengths && ring_lengths->len > 0)
+        mlt_write_u32_varint_stream (&body, 3, 3, ring_lengths);
     mlt_write_i32_varint_stream (&body, 1, 3, &ctx->vertices);
     for (i = 0; i < ctx->prop_count; i++)
       {
@@ -1020,6 +1198,7 @@ mlt_build_tile (struct mlt_ctx *ctx, struct mvt_buf *tile)
     mvt_buf_put_data (tile, body.data, body.len);
     if (body.error)
         tile->error = 1;
+    mlt_u32_vec_free (&line_part_lengths);
     mvt_buf_free (&body);
 }
 
