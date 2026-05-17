@@ -307,6 +307,14 @@ AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id)
 AsMVT(mvt_geom, layer_name, extent, properties_json, feature_id, buffer)
 
 MVTConcat(tile_blob_1, tile_blob_2, ...)
+
+AsMLT(mlt_geom)
+AsMLT(mlt_geom, layer_name)
+AsMLT(mlt_geom, layer_name, extent)
+AsMLT(mlt_geom, layer_name, extent, properties_json)
+AsMLT(mlt_geom, layer_name, extent, properties_json, feature_id)
+AsMLT(mlt_geom, layer_name, extent, feature_id)
+ST_AsMLT(mlt_geom, layer_name, extent, properties_json, feature_id)
 ```
 
 ### 参数说明
@@ -416,6 +424,36 @@ SELECT MVTConcat(
     )
 ) AS tile;
 ```
+
+### 生成 MLT 瓦片
+
+`AsMLT` / `ST_AsMLT` 是实验性 MapLibre Tile 输出函数。MLT 是列式 FeatureTable 格式，不是 MVT PBF 的别名；当前版本输出合法的 MLT layer block，支持 geometry、可选 feature id 和 `properties_json` 顶层属性列。
+
+```sql
+SELECT ST_AsMLT(
+    AsMVTGeom(f.geom, :minx, :miny, :maxx, :maxy, 4096),
+    'features',
+    4096,
+    f.properties,
+    f.id
+) AS tile
+FROM features AS f
+WHERE f.rowid IN (
+    SELECT rowid
+    FROM SpatialIndex
+    WHERE f_table_name = 'features'
+      AND f_geometry_column = 'geom'
+      AND search_frame = BuildMbr(:minx, :miny, :maxx, :maxy, 3857)
+);
+```
+
+当前 `ST_AsMLT` 限制：
+
+- 输入 geometry 应先用 `AsMVTGeom(...)` 转成 tile 坐标。
+- 支持 point、line、polygon 的基础列式 geometry streams。
+- 支持 `FeatureTable` 名称、extent、可选 uint64 feature id。
+- 支持 `properties_json` 顶层 string、number、boolean 属性，当前统一写成 nullable string 列；null、object、array 会跳过。
+- 暂不做 MLT 的高级压缩优化，例如 FastPFOR、FSST、shared dictionary、Morton/Hilbert vertex dictionary。
 
 Kotlin 读取 MVT blob：
 

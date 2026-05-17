@@ -101,6 +101,7 @@ Regione Toscana - Settore Sistema Informativo Territoriale ed Ambientale
 #include <spatialite_private.h>
 
 void register_spatialite_mvt_sql_functions (sqlite3 *db);
+void register_spatialite_mlt_sql_functions (sqlite3 *db);
 
 #ifdef ENABLE_LIBXML2		/* LIBXML2 (and thus WFS) enabled */
 #include <spatialite/gg_wfs.h>
@@ -35630,6 +35631,7 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_has_freeXL, 0, 0, 0);
     register_spatialite_mvt_sql_functions (db);
+    register_spatialite_mlt_sql_functions (db);
     sqlite3_create_function_v2 (db, "HasEpsg", 0,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_has_epsg, 0, 0, 0);

@@ -65,8 +65,9 @@ LOCAL_SRC_FILES := \
      $(SPATIALITE_PATH)/src/shapefiles/validator.c \
      $(SPATIALITE_PATH)/src/spatialite/extra_tables.c \
      $(SPATIALITE_PATH)/src/spatialite/mbrcache.c \
-      $(SPATIALITE_PATH)/src/spatialite/metatables.c \
-      $(SPATIALITE_PATH)/src/spatialite/mvt.c \
+       $(SPATIALITE_PATH)/src/spatialite/metatables.c \
+       $(SPATIALITE_PATH)/src/spatialite/mlt.c \
+       $(SPATIALITE_PATH)/src/spatialite/mvt.c \
       $(SPATIALITE_PATH)/src/spatialite/se_helpers.c \
      $(SPATIALITE_PATH)/src/spatialite/spatialite.c \
      $(SPATIALITE_PATH)/src/spatialite/spatialite_init.c \
