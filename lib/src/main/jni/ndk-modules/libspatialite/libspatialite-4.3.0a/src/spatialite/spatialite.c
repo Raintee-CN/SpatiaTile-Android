@@ -35565,6 +35565,9 @@ splite_close_callback (void *p_cache)
 }
 #endif
 
+static void register_postgis_compat_sql_functions (sqlite3 * db,
+						   struct splite_internal_cache *cache);
+
 SPATIALITE_PRIVATE void *
 register_spatialite_sql_functions (void *p_db, const void *p_cache)
 {
@@ -35948,25 +35951,13 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "AsGeoJSON", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_AsGeoJSON, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_AsGeoJSON", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_AsGeoJSON, 0, 0, 0);
     sqlite3_create_function_v2 (db, "AsGeoJSON", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_AsGeoJSON, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_AsGeoJSON", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_AsGeoJSON, 0, 0, 0);
     sqlite3_create_function_v2 (db, "AsGeoJSON", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_AsGeoJSON, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_AsGeoJSON", 3,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_AsGeoJSON, 0, 0, 0);
     sqlite3_create_function_v2 (db, "GeomFromGeoJSON", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_FromGeoJSON, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_GeomFromGeoJSON", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_FromGeoJSON, 0, 0, 0);
     sqlite3_create_function_v2 (db, "GeomFromKml", 1,
@@ -36512,9 +36503,6 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "SetSRID", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_SetSRID, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_SetSRID", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_SetSRID, 0, 0, 0);
     sqlite3_create_function_v2 (db, "IsEmpty", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_IsEmpty, 0, 0, 0);
@@ -36559,13 +36547,7 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "ST_MinX", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MbrMinX, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_XMin", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MbrMinX, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ST_MinY", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MbrMinY, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_YMin", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MbrMinY, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ST_MinZ", 1,
@@ -36577,13 +36559,7 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "ST_MaxX", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MbrMaxX, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_XMax", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MbrMaxX, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ST_MaxY", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MbrMaxY, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_YMax", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MbrMaxY, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ST_MaxZ", 1,
@@ -36733,12 +36709,6 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "BuildMbr", 5,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_BuildMbr2, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakeEnvelope", 4,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_BuildMbr1, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakeEnvelope", 5,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_BuildMbr2, 0, 0, 0);
     sqlite3_create_function_v2 (db, "BuildCircleMbr", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_BuildCircleMbr1, 0, 0, 0);
@@ -36763,21 +36733,12 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "ST_Point", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MakePoint1, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakePoint", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MakePoint1, 0, 0, 0);
     sqlite3_create_function_v2 (db, "MakePoint", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MakePoint1, 0, 0, 0);
     sqlite3_create_function_v2 (db, "MakePoint", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MakePoint2, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakePoint", 3,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MakePointZ1, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakePoint", 4,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-				fnct_MakePointZM1, 0, 0, 0);
     sqlite3_create_function_v2 (db, "MakePointZ", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
 				fnct_MakePointZ1, 0, 0, 0);
@@ -36799,13 +36760,7 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "MakeLine", 1,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache, 0,
 				fnct_MakeLine_step, fnct_MakeLine_final, 0);
-    sqlite3_create_function_v2 (db, "ST_MakeLine", 1,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache, 0,
-				fnct_MakeLine_step, fnct_MakeLine_final, 0);
     sqlite3_create_function_v2 (db, "MakeLine", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_MakeLine, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_MakeLine", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_MakeLine, 0, 0, 0);
     sqlite3_create_function_v2 (db, "MakeCircle", 3,
@@ -37906,13 +37861,7 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "PtDistWithin", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_PtDistWithin, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_DWithin", 3,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_PtDistWithin, 0, 0, 0);
     sqlite3_create_function_v2 (db, "PtDistWithin", 4,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_PtDistWithin, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_DWithin", 4,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_PtDistWithin, 0, 0, 0);
     sqlite3_create_function_v2 (db, "BdPolyFromText", 1,
@@ -38011,9 +37960,6 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "ST_Line_Interpolate_Point", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_LineInterpolatePoint, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_LineInterpolatePoint", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_LineInterpolatePoint, 0, 0, 0);
     sqlite3_create_function_v2 (db, "Line_Interpolate_Equidistant_Points", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_LineInterpolateEquidistantPoints, 0, 0, 0);
@@ -38026,16 +37972,10 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
     sqlite3_create_function_v2 (db, "ST_Line_Locate_Point", 2,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_LineLocatePoint, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_LineLocatePoint", 2,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_LineLocatePoint, 0, 0, 0);
     sqlite3_create_function_v2 (db, "Line_Substring", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_LineSubstring, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ST_Line_Substring", 3,
-				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
-				fnct_LineSubstring, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "ST_LineSubstring", 3,
 				SQLITE_UTF8 | SQLITE_DETERMINISTIC, cache,
 				fnct_LineSubstring, 0, 0, 0);
     sqlite3_create_function_v2 (db, "ClosestPoint", 2,
@@ -38685,8 +38625,12 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
 
 #endif /* end enabling GeoPackage extensions */
 
+    register_postgis_compat_sql_functions (db, cache);
+
     return cache;
 }
+
+#include "postgis_compat.c"
 
 SPATIALITE_PRIVATE void
 init_spatialite_virtualtables (void *p_db, const void *p_cache)
