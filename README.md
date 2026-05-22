@@ -70,6 +70,36 @@ import android.database.Cursor
 
 `SQLiteDatabase.loadLibs()` is not required. Native libraries are loaded automatically when `org.spatialite.database.SQLiteDatabase` is first used.
 
+## PostGIS Compatibility SQL Functions
+
+The native SpatiaLite build exposes many common PostGIS-style `ST_*` functions, including geometry constructors, serializers, predicates, overlays, measurements, and line helpers. This fork also adds compatibility aliases for frequently used PostGIS names backed by existing SpatiaLite implementations:
+
+```sql
+ST_AsGeoJSON(geom)
+ST_AsGeoJSON(geom, precision)
+ST_AsGeoJSON(geom, precision, options)
+ST_GeomFromGeoJSON(json)
+ST_SetSRID(geom, srid)
+ST_MakeEnvelope(xmin, ymin, xmax, ymax)
+ST_MakeEnvelope(xmin, ymin, xmax, ymax, srid)
+ST_MakePoint(x, y)
+ST_MakePoint(x, y, z)
+ST_MakePoint(x, y, z, m)
+ST_MakeLine(geom)
+ST_MakeLine(geom1, geom2)
+ST_DWithin(geom1, geom2, distance)
+ST_DWithin(geom1, geom2, distance, use_spheroid)
+ST_XMin(geom)
+ST_YMin(geom)
+ST_XMax(geom)
+ST_YMax(geom)
+ST_LineInterpolatePoint(line, fraction)
+ST_LineLocatePoint(line, point)
+ST_LineSubstring(line, start_fraction, end_fraction)
+```
+
+These are compatibility aliases, not a full PostgreSQL/PostGIS type-system clone. SQLite does not support PostgreSQL array arguments or set-returning records, so functions such as `ST_Dump` need separate SQLite-friendly designs.
+
 ## Vector Tile SQL Functions
 
 ### MVT
