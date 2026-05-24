@@ -67,8 +67,10 @@ LOCAL_SRC_FILES := \
      $(SPATIALITE_PATH)/src/spatialite/mbrcache.c \
        $(SPATIALITE_PATH)/src/spatialite/metatables.c \
        $(SPATIALITE_PATH)/src/spatialite/mlt.c \
-       $(SPATIALITE_PATH)/src/spatialite/mvt.c \
-      $(SPATIALITE_PATH)/src/spatialite/se_helpers.c \
+        $(SPATIALITE_PATH)/src/spatialite/mvt.c \
+        $(SPATIALITE_PATH)/src/spatialite/mvt_fast.c \
+        $(SPATIALITE_PATH)/src/spatialite/import_fast.c \
+       $(SPATIALITE_PATH)/src/spatialite/se_helpers.c \
      $(SPATIALITE_PATH)/src/spatialite/spatialite.c \
      $(SPATIALITE_PATH)/src/spatialite/spatialite_init.c \
      $(SPATIALITE_PATH)/src/spatialite/srid_aux.c \

@@ -12,6 +12,8 @@ LOCAL_SRC_FILES:= \
     android_database_SQLiteGlobal.cpp \
     android_database_SQLiteDebug.cpp \
     android_database_CursorWindow.cpp \
+    android_database_MvtFast.cpp \
+    android_database_ImportFast.cpp \
     CursorWindow.cpp \
     JNIHelp.cpp \
     JNIString.cpp
@@ -26,6 +28,8 @@ LOCAL_CFLAGS += -Wno-unused-parameter -Wno-int-to-pointer-cast
 LOCAL_CFLAGS += -Wno-uninitialized -Wno-parentheses -Wpointer-bool-conversion
 LOCAL_CPPFLAGS += -Wno-conversion-null
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/ndk-modules/sqlite
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/ndk-modules/libspatialite/libspatialite-4.3.0a/src/spatialite
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/ndk-modules/libspatialite/libspatialite-4.3.0a/src/headers
 
 # libs from the NDK
 LOCAL_LDLIBS += -llog

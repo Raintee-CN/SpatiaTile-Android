@@ -954,6 +954,9 @@ extern int register_android_database_CursorWindow(JNIEnv *env);
 
 } // namespace android
 
+extern "C" int register_android_database_MvtFast(JNIEnv *env);
+extern "C" int register_android_database_ImportFast(JNIEnv *env);
+
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
   JNIEnv *env = 0;
 
@@ -964,6 +967,8 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
   android::register_android_database_SQLiteDebug(env);
   android::register_android_database_SQLiteGlobal(env);
   android::register_android_database_CursorWindow(env);
+  register_android_database_MvtFast(env);
+  register_android_database_ImportFast(env);
 
   return JNI_VERSION_1_4;
 }
