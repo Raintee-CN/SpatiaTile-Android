@@ -35566,8 +35566,7 @@ splite_close_callback (void *p_cache)
 }
 #endif
 
-static void register_postgis_compat_sql_functions (sqlite3 * db,
-						   struct splite_internal_cache *cache);
+#include "postgis_compat.c"
 
 SPATIALITE_PRIVATE void *
 register_spatialite_sql_functions (void *p_db, const void *p_cache)
@@ -38631,8 +38630,6 @@ register_spatialite_sql_functions (void *p_db, const void *p_cache)
 
     return cache;
 }
-
-#include "postgis_compat.c"
 
 SPATIALITE_PRIVATE void
 init_spatialite_virtualtables (void *p_db, const void *p_cache)
