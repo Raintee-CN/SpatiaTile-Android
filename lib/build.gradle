@@ -1,0 +1,121 @@
+apply plugin: 'com.android.library'
+
+group = 'com.github.sevar83'
+
+import org.gradle.internal.os.OperatingSystem;
+
+gradle.projectsEvaluated {
+    preBuild.dependsOn(buildSqlite)
+}
+
+android {
+    namespace 'org.spatialite'
+    compileSdkVersion 36
+
+    defaultConfig {
+        minSdkVersion 16
+        targetSdkVersion 36
+        versionCode 1
+        versionName '1.0'
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles 'proguard-rules.pro'
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    lint {
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    // ndk gradle support is still very bad so it's built with the regular ndk-build
+    sourceSets.main.jni.srcDirs = ['src/main/none']
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.0.2'
+    implementation 'androidx.annotation:annotation:1.1.0'
+    androidTestImplementation 'androidx.test:runner:1.2.0'
+    androidTestImplementation 'androidx.test:rules:1.2.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.1'
+}
+
+ext {
+    sqliteDistributionUrl = 'https://sqlite.org/2016/sqlite-amalgamation-3150100.zip'
+}
+
+tasks.register('downloadSqlite') {
+    def sqliteZip = file('src/main/jni/ndk-modules/sqlite/sqlite.zip')
+    outputs.file sqliteZip
+
+    doLast {
+        ant.get(src: project.sqliteDistributionUrl, dest: sqliteZip, skipexisting: true)
+    }
+}
+
+tasks.register('installSqlite', Copy) {
+    dependsOn downloadSqlite
+    from(project.zipTree(file('src/main/jni/ndk-modules/sqlite/sqlite.zip'))) {
+        include '*/sqlite3.*'
+        eachFile { it.path = it.name }
+        includeEmptyDirs = false
+    }
+    into 'src/main/jni/ndk-modules/sqlite'
+}
+
+def ndkDir = System.getenv("NDK_HOME")
+if (ndkDir == null) {
+    def propertiesFile = project.rootProject.file('local.properties')
+    if (propertiesFile.exists()) {
+        Properties properties = new Properties()
+        properties.load(propertiesFile.newDataInputStream())
+        ndkDir = properties.getProperty('ndk.dir')
+        if (ndkDir == null) {
+            def sdkDir = properties.getProperty('sdk.dir')
+            if (sdkDir != null) {
+                def ndkRoot = file("$sdkDir/ndk")
+                def installedNdks = ndkRoot.exists() ? ndkRoot.listFiles().findAll { new File(it, OperatingSystem.current().windows ? 'ndk-build.cmd' : 'ndk-build').exists() }.sort() : []
+                if (!installedNdks.isEmpty()) {
+                    def legacyNdk = installedNdks.find { it.name.startsWith('22.') }
+                    ndkDir = (legacyNdk ?: installedNdks.last()).absolutePath
+                }
+            }
+        }
+    }
+}
+
+if (ndkDir == null) {
+    throw new GradleException("Either NDK_HOME, ndk.dir, or an installed Android SDK NDK is required!")
+}
+
+tasks.register('buildSqlite', Exec) {
+    dependsOn installSqlite
+    println("NDK directory: $ndkDir")
+
+    // Add NDK_DEBUG=1 for debug symbols or V=1 for verbose building output
+    if (OperatingSystem.current().linux) {
+        commandLine "$ndkDir/ndk-build", '-j8', '-C', file('src/main/jni').absolutePath
+    } else if (OperatingSystem.current().windows) {
+        commandLine "$ndkDir/ndk-build.cmd", '-j8', '-C', file('src/main/jni').absolutePath
+    } else {
+        throw new GradleException("Unsupported OS")
+    }
+}
+
+tasks.register('ndkClean', Exec) {
+    description = 'Clean NDK Binaries'
+    if (OperatingSystem.current().linux) {
+        commandLine "$ndkDir/ndk-build", 'clean', '-C', file('src/main/jni').absolutePath
+    } else if (OperatingSystem.current().windows) {
+        commandLine "$ndkDir/ndk-build.cmd", 'clean', '-C', file('src/main/jni').absolutePath
+    } else {
+        throw new GradleException("Unsupported OS")
+    }
+}
+
+clean.dependsOn ndkClean
