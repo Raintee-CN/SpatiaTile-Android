@@ -40,9 +40,9 @@ android {
 dependencies {
     implementation 'androidx.core:core:1.0.2'
     implementation 'androidx.annotation:annotation:1.1.0'
-    androidTestImplementation 'androidx.test:runner:1.2.0'
-    androidTestImplementation 'androidx.test:rules:1.2.0'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
 
 ext {
@@ -98,10 +98,14 @@ tasks.register('buildSqlite', Exec) {
     println("NDK directory: $ndkDir")
 
     // Add NDK_DEBUG=1 for debug symbols or V=1 for verbose building output
+    def ndkArgs = ['-j8', '-C', file('src/main/jni').absolutePath]
+    if (project.hasProperty('ndkAbi')) {
+        ndkArgs.add("APP_ABI=${project.property('ndkAbi')}")
+    }
     if (OperatingSystem.current().linux) {
-        commandLine "$ndkDir/ndk-build", '-j8', '-C', file('src/main/jni').absolutePath
+        commandLine "$ndkDir/ndk-build", *ndkArgs
     } else if (OperatingSystem.current().windows) {
-        commandLine "$ndkDir/ndk-build.cmd", '-j8', '-C', file('src/main/jni').absolutePath
+        commandLine "$ndkDir/ndk-build.cmd", *ndkArgs
     } else {
         throw new GradleException("Unsupported OS")
     }

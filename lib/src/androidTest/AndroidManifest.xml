@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          package="org.spatialite">
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-sdk tools:overrideLibrary="androidx.test,androidx.test.core,androidx.test.rules,androidx.test.runner,androidx.test.ext.junit,androidx.test.monitor,androidx.test.services,androidx.test.services.storage,androidx.annotation" />
 
     <application>
         <provider

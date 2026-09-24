@@ -12,10 +12,10 @@ extern "C" {
 #endif
 
 /*
- * Register optimized SQL functions:
- *   AsMVTFast(geom, layer, extent, minx, miny, maxx, maxy, props, id, buffer)
- *   AsMVT2(geom, layer, extent, props, id, buffer)  -- drop-in for AsMVT
- *   AsMVTGeom2(geom, minx, miny, maxx, maxy [, extent, buffer, clip])
+ * Register AsMVTFast(geom, layer, extent, minx, miny, maxx, maxy,
+ *                    props, id, buffer).
+ * This aggregate transforms and encodes in one step. AsMVT/AsMVTGeom in
+ * mvt.c remain the compatible two-step SQL API.
  */
 void register_spatialite_mvt_fast_sql_functions (sqlite3 *db);
 

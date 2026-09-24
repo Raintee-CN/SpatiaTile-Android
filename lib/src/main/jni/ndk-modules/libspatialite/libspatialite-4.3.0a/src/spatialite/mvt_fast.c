@@ -1250,7 +1250,7 @@ mvt_geom_type (gaiaGeomCollPtr geom)
 }
 
 /* ========================================================================
-   Optimized SQL Aggregate Context (Plan A: drop-in replacement for AsMVT)
+   SQL aggregate context shared by AsMVTFast and direct tile generation.
    ======================================================================== */
 
 struct mvt_fast_ctx
@@ -1333,10 +1333,9 @@ mvt_fast_append_feature (struct mvt_fast_ctx *ctx, gaiaGeomCollPtr geom,
 }
 
 /* ========================================================================
-   SQL Functions: AsMVTFast (optimized drop-in replacement)
-   Combines AsMVTGeom + AsMVT into a single aggregate, eliminating blob
-   serialization round-trip.
-   
+   AsMVTFast: transform and aggregate in one SQL function.
+   Skips the SpatiaLite blob written by AsMVTGeom and read back by AsMVT.
+
    Usage: AsMVTFast(geom, layer_name, extent, minx, miny, maxx, maxy,
                     properties_json, feature_id, buffer)
    ======================================================================== */
@@ -1937,233 +1936,9 @@ mvt_fast_generate_tile (sqlite3 *db, const char *table_name,
     return rc;
 }
 
-/* ========================================================================
-   SQL Function Registration
-   
-   Registers both the optimized SQL aggregate (AsMVTFast) and keeps
-   backward compatibility with original AsMVT/AsMVTGeom.
-   ======================================================================== */
-
-/* Also provide optimized versions of the original functions */
-static void
-fnct_AsMVTGeom_fast (sqlite3_context *context, int argc, sqlite3_value **argv)
-{
-    const unsigned char *blob;
-    int blob_size;
-    gaiaGeomCollPtr geom;
-    double minx, miny, maxx, maxy;
-    int extent = 4096;
-    int buffer = 256;
-    int clip = 1;
-    double width, height, fx, fy, buffer_map;
-    unsigned char *out_blob;
-    int out_size;
-
-    if (argc < 5 || sqlite3_value_type (argv[0]) == SQLITE_NULL)
-      { sqlite3_result_null (context); return; }
-    if (sqlite3_value_type (argv[0]) != SQLITE_BLOB)
-      { sqlite3_result_null (context); return; }
-
-    minx = sqlite3_value_double (argv[1]);
-    miny = sqlite3_value_double (argv[2]);
-    maxx = sqlite3_value_double (argv[3]);
-    maxy = sqlite3_value_double (argv[4]);
-    if (argc > 5 && sqlite3_value_type (argv[5]) != SQLITE_NULL)
-        extent = sqlite3_value_int (argv[5]);
-    if (argc > 6 && sqlite3_value_type (argv[6]) != SQLITE_NULL)
-        buffer = sqlite3_value_int (argv[6]);
-    if (argc > 7 && sqlite3_value_type (argv[7]) != SQLITE_NULL)
-        clip = sqlite3_value_int (argv[7]);
-
-    width = maxx - minx;
-    height = maxy - miny;
-    if (width <= 0.0 || height <= 0.0 || extent <= 0 || buffer < 0)
-      { sqlite3_result_null (context); return; }
-
-    blob = sqlite3_value_blob (argv[0]);
-    blob_size = sqlite3_value_bytes (argv[0]);
-    geom = gaiaFromSpatiaLiteBlobWkb (blob, blob_size);
-    if (!geom)
-      { sqlite3_result_null (context); return; }
-
-    gaiaMbrGeometry (geom);
-    buffer_map = ((double) buffer / (double) extent) * width;
-    if (clip && !mvt_bounds_intersects (geom, minx, miny, maxx, maxy, buffer_map))
-      { gaiaFreeGeomColl (geom); sqlite3_result_null (context); return; }
-    fx = (double) extent / width;
-    fy = (double) extent / height;
-    if (!mvt_bounds_large_enough (geom, fx, fy))
-      { gaiaFreeGeomColl (geom); sqlite3_result_null (context); return; }
-
-    mvt_transform_geom_inline (geom, minx, maxy, fx, fy);
-    gaiaToSpatiaLiteBlobWkb (geom, &out_blob, &out_size);
-    gaiaFreeGeomColl (geom);
-    if (!out_blob || out_size <= 0)
-      { sqlite3_result_null (context); return; }
-    sqlite3_result_blob (context, out_blob, out_size, free);
-}
-
-/* Optimized AsMVT using hash table (drop-in replacement for original) */
-static void
-fnct_AsMVT_fast_step (sqlite3_context *context, int argc, sqlite3_value **argv)
-{
-    struct mvt_fast_ctx *ctx;
-    const unsigned char *blob;
-    int blob_size;
-    gaiaGeomCollPtr geom;
-    const char *name;
-    const char *properties_json = NULL;
-    unsigned long long feature_id = 0;
-    int has_feature_id = 0;
-    int buffer = 256;
-
-    ctx = (struct mvt_fast_ctx *) sqlite3_aggregate_context (context, sizeof (struct mvt_fast_ctx));
-    if (!ctx) return;
-
-    if (!ctx->layer_name)
-      {
-          mvt_buf_init (&ctx->features);
-          mvt_hash_init (&ctx->hash);
-          ctx->extent = 4096;
-          ctx->buffer = 256;
-          ctx->feature_count = 0;
-          ctx->error = 0;
-          ctx->has_bounds = 0;
-          ctx->layer_name = (char *) malloc (8);
-          if (ctx->layer_name) strcpy (ctx->layer_name, "default");
-          else ctx->error = 1;
-      }
-    if (ctx->error || argc < 1 || sqlite3_value_type (argv[0]) == SQLITE_NULL)
-        return;
-
-    if (argc > 1 && sqlite3_value_type (argv[1]) == SQLITE_TEXT && ctx->feature_count == 0)
-      {
-          name = (const char *) sqlite3_value_text (argv[1]);
-          if (name)
-            { free (ctx->layer_name); ctx->layer_name = (char *) malloc (strlen (name) + 1);
-              if (ctx->layer_name) strcpy (ctx->layer_name, name); else ctx->error = 1; }
-      }
-    if (argc > 2 && sqlite3_value_type (argv[2]) != SQLITE_NULL && ctx->feature_count == 0)
-        ctx->extent = sqlite3_value_int (argv[2]);
-    if (argc > 3 && sqlite3_value_type (argv[3]) == SQLITE_TEXT)
-        properties_json = (const char *) sqlite3_value_text (argv[3]);
-    if (argc > 4 && sqlite3_value_type (argv[4]) != SQLITE_NULL)
-      {
-          sqlite3_int64 raw_id = sqlite3_value_int64 (argv[4]);
-          if (raw_id >= 0) { feature_id = (unsigned long long) raw_id; has_feature_id = 1; }
-      }
-    if (argc > 5 && sqlite3_value_type (argv[5]) != SQLITE_NULL)
-        buffer = sqlite3_value_int (argv[5]);
-    if (buffer < 0) buffer = 0;
-    ctx->buffer = buffer;
-
-    if (sqlite3_value_type (argv[0]) != SQLITE_BLOB) return;
-    blob = sqlite3_value_blob (argv[0]);
-    blob_size = sqlite3_value_bytes (argv[0]);
-    geom = gaiaFromSpatiaLiteBlobWkb (blob, blob_size);
-    if (!geom) return;
-
-    mvt_fast_append_feature (ctx, geom, properties_json, feature_id, has_feature_id);
-    gaiaFreeGeomColl (geom);
-}
-
-static void
-fnct_AsMVT_fast_final (sqlite3_context *context)
-{
-    struct mvt_fast_ctx *ctx;
-    struct mvt_buf layer;
-    struct mvt_buf tile;
-    int i;
-
-    ctx = (struct mvt_fast_ctx *) sqlite3_aggregate_context (context, 0);
-    if (!ctx || ctx->error || ctx->feature_count == 0)
-      {
-          if (ctx) mvt_fast_ctx_free (ctx);
-          sqlite3_result_null (context);
-          return;
-      }
-
-    mvt_buf_init (&layer);
-    mvt_buf_init (&tile);
-
-    mvt_buf_put_bytes_field (&layer, 1, (const unsigned char *) ctx->layer_name,
-                             (int) strlen (ctx->layer_name));
-    mvt_buf_put_data (&layer, ctx->features.data, ctx->features.len);
-
-    /* Keys in order */
-    {
-        int tk = ctx->hash.key_count;
-        if (tk > 0)
-          {
-              const char **kt = (const char **) malloc (sizeof (char *) * tk);
-              int *kl = (int *) malloc (sizeof (int) * tk);
-              if (kt && kl)
-                {
-                    for (i = 0; i < MVT_HASH_SIZE; i++)
-                      { struct mvt_key_entry *e = ctx->hash.key_buckets[i];
-                        while (e) { kt[e->index] = e->text; kl[e->index] = e->text_len; e = e->next; } }
-                    for (i = 0; i < tk; i++)
-                        mvt_buf_put_bytes_field (&layer, 3, (const unsigned char *) kt[i], kl[i]);
-                }
-              free (kt); free (kl);
-          }
-    }
-    /* Values in order */
-    {
-        int tv = ctx->hash.value_count;
-        if (tv > 0)
-          {
-              struct mvt_buf **ve = (struct mvt_buf **) malloc (sizeof (struct mvt_buf *) * tv);
-              if (ve)
-                {
-                    for (i = 0; i < MVT_HASH_SIZE; i++)
-                      { struct mvt_value_entry *e = ctx->hash.value_buckets[i];
-                        while (e) { ve[e->index] = &e->encoded; e = e->next; } }
-                    for (i = 0; i < tv; i++)
-                        mvt_buf_put_bytes_field (&layer, 4, ve[i]->data, ve[i]->len);
-                }
-              free (ve);
-          }
-    }
-
-    mvt_buf_put_varint_field (&layer, 5, (unsigned long long) ctx->extent);
-    mvt_buf_put_varint_field (&layer, 15, 2);
-    mvt_buf_put_bytes_field (&tile, 3, layer.data, layer.len);
-
-    if (layer.error || tile.error)
-        sqlite3_result_null (context);
-    else
-        sqlite3_result_blob (context, tile.data, tile.len, SQLITE_TRANSIENT);
-
-    mvt_buf_free (&layer);
-    mvt_buf_free (&tile);
-    mvt_fast_ctx_free (ctx);
-}
-
-/* ========================================================================
-   Registration
-   ======================================================================== */
-
 void
 register_spatialite_mvt_fast_sql_functions (sqlite3 *db)
 {
-    /* AsMVTFast: combined transform+aggregate (no blob round-trip) */
     sqlite3_create_function_v2 (db, "AsMVTFast", -1, SQLITE_UTF8, 0,
                                 0, fnct_AsMVTFast_step, fnct_AsMVTFast_final, 0);
-
-    /* Drop-in replacements with hash table optimization */
-    sqlite3_create_function_v2 (db, "AsMVT2", -1, SQLITE_UTF8, 0,
-                                0, fnct_AsMVT_fast_step, fnct_AsMVT_fast_final, 0);
-    sqlite3_create_function_v2 (db, "AsMVTGeom2", 5,
-                                SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-                                fnct_AsMVTGeom_fast, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "AsMVTGeom2", 6,
-                                SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-                                fnct_AsMVTGeom_fast, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "AsMVTGeom2", 7,
-                                SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-                                fnct_AsMVTGeom_fast, 0, 0, 0);
-    sqlite3_create_function_v2 (db, "AsMVTGeom2", 8,
-                                SQLITE_UTF8 | SQLITE_DETERMINISTIC, 0,
-                                fnct_AsMVTGeom_fast, 0, 0, 0);
 }
